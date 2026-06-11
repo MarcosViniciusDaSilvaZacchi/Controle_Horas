@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle de Ponto Local</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Biblioteca para gerar PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body class="bg-gray-100 p-6">
+
+    <div class="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-md">
+        <h1 class="text-2xl font-bold text-gray-800 mb-6 text-center">📊 Registro de Ponto & Horas Extras</h1>
+        
+        <!-- Formulário de Entrada -->
+        <form id="ponto-form" class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div>
+                <label class="block text-sm font-semibold text-gray-700">Data</label>
+                <input type="date" id="data" required class="w-full mt-1 p-2 border rounded shadow-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700">Entrada</label>
+                <input type="time" id="entrada" required class="w-full mt-1 p-2 border rounded shadow-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700">Sai. Almoço</label>
+                <input type="time" id="saida_almoco" required class="w-full mt-1 p-2 border rounded shadow-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700">Ret. Almoço</label>
+                <input type="time" id="retorno_almoco" required class="w-full mt-1 p-2 border rounded shadow-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-semibold text-gray-700">Saída</label>
+                <input type="time" id="saida" required class="w-full mt-1 p-2 border rounded shadow-sm">
+            </div>
+            <div class="md:col-span-5 flex justify-between items-center mt-2">
+                <button type="button" onclick="limparHistorico()" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded shadow text-sm">
+                    ⚠️ Limpar Todo Histórico
+                </button>
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded shadow">
+                    Gravar Dia
+                </button>
+            </div>
+        </form>
+
+        <hr class="my-6">
+
+        <!-- Área do Relatório (O que vai para o PDF) -->
+        <div id="relatorio-area" class="p-4 bg-white">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-700">Histórico de Lançamentos</h2>
+                <div class="text-right text-sm font-semibold text-gray-600">
+                    Total Geral de Horas Extras (50%): <span id="total-geral-extras" class="text-orange-600 text-base">00:00</span>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left text-gray-500">
+                    <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                        <tr>
+                            <th class="py-3 px-4">Data</th>
+                            <th class="py-3 px-4">Dia</th>
+                            <th class="py-3 px-4">Total Trabalhado</th>
+                            <th class="py-3 px-4">Hora Extra (50%)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabela-corpo">
+                        <!-- Linhas inseridas via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Botão de Exportar -->
+        <div class="mt-6 text-left">
+            <button onclick="exportarPDF()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded shadow">
+                📄 Exportar Relatório PDF
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('ponto-form');
+        const tabelaCorpo = document.getElementById('tabela-corpo');
+        const totalGeralLabel = document.getElementById('total-geral-extras');
+
+        document.addEventListener('DOMContentLoaded', atualizarTabela);
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const dataVal = document.getElementById('data').value;
+            const entrada = document.getElementById('entrada').value;
+            const saidaAlmoco = document.getElementById('saida_almoco').value;
+            const retornoAlmoco = document.getElementById('retorno_almoco').value;
+            const saida = document.getElementById('saida').value;
+
+            const minEntrada = toMinutes(entrada);
+            const minSaidaAlmoco = toMinutes(saidaAlmoco);
+            const minRetornoAlmoco = toMinutes(retornoAlmoco);
+            const minSaida = toMinutes(saida);
+
+            // Cálculo das horas trabalhadas no dia
+            const turno1 = minSaidaAlmoco - minEntrada;
+            const turno2 = minSaida - minRetornoAlmoco;
+            const totalTrabalhado = turno1 + turno2;
+
+            // Identificar dia da semana (0 = Domingo, 6 = Sábado)
+            const dataObj = new Date(dataVal + 'T00:00:00');
+            const diaSemana = dataObj.getDay(); 
+            const diasNome = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+            let he50 = 0;
+            const jornadaPadrao = 528; // 8h48m em minutos (8 * 60 + 48)
+
+            // Regra: Sábado e Domingo tudo é extra. Dias de semana apenas o que passar de 8h48.
+            if (diaSemana === 0 || diaSemana === 6) { 
+                he50 = totalTrabalhado; 
+            } else { 
+                if (totalTrabalhado > jornadaPadrao) {
+                    he50 = totalTrabalhado - jornadaPadrao;
+                }
+            }
+
+            const registro = {
+                data: dataVal,
+                diaNome: diasNome[diaSemana],
+                trabalhado: toHHMM(totalTrabalhado),
+                he50: he50 // salvando em minutos para somar no relatório depois
+            };
+
+            let historico = JSON.parse(localStorage.getItem('pontos')) || [];
+            historico.push(registro);
+            localStorage.setItem('pontos', JSON.stringify(historico));
+
+            form.reset();
+            atualizarTabela();
+        });
+
+        function toMinutes(timeStr) {
+            const [h, m] = timeStr.split(':').map(Number);
+            return (h * 60) + m;
+        }
+
+        function toHHMM(minutes) {
+            if (minutes <= 0) return '00:00';
+            const h = Math.floor(minutes / 60).toString().padStart(2, '0');
+            const m = (minutes % 60).toString().padStart(2, '0');
+            return `${h}:${m}`;
+        }
+
+        function atualizarTabela() {
+            tabelaCorpo.innerHTML = '';
+            const historico = JSON.parse(localStorage.getItem('pontos')) || [];
+            
+            // Ordenar por data mais antiga para a mais recente
+            historico.sort((a,b) => new Date(a.data) - new Date(b.data));
+
+            let somatorioExtras = 0;
+
+            historico.forEach(reg => {
+                somatorioExtras += reg.he50;
+                const row = `
+                    <tr class="bg-white border-b hover:bg-gray-50">
+                        <td class="py-3 px-4 font-medium text-gray-900">${reg.data.split('-').reverse().join('/')}</td>
+                        <td class="py-3 px-4">${reg.diaNome}</td>
+                        <td class="py-3 px-4">${reg.trabalhado}</td>
+                        <td class="py-3 px-4 text-orange-600 font-semibold">${toHHMM(reg.he50)}</td>
+                    </tr>
+                `;
+                tabelaCorpo.innerHTML += row;
+            });
+
+            totalGeralLabel.innerText = toHHMM(somatorioExtras);
+        }
+
+        function limparHistorico() {
+            if (confirm('Tem certeza que deseja apagar TODOS os registros salvos?')) {
+                localStorage.removeItem('pontos');
+                atualizarTabela();
+            }
+        }
+
+        function exportarPDF() {
+            const element = document.getElementById('relatorio-area');
+            const opt = {
+                margin:       10,
+                filename:     'relatorio-ponto-e-extras.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2 },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+            html2pdf().set(opt).from(element).save();
+        }
+    </script>
+</body>
+</html>
